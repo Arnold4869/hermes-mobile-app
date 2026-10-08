@@ -1,0 +1,76 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Expo prebuild (ios)
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Show generated project
+        run: ls ios
+
+      - name: Build (unsigned, Release, device)
+        run: |
+          xcodebuild \
+            -project ios/HermesMobileApp.xcodeproj \
+            -scheme HermesMobileApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      - name: Locate .app
+        run: find build/Build/Products -type d -name '*.app'
+
+      - name: Package unsigned IPA
+        run: |
+          set -e
+          APP_PATH=$(find build/Build/Products -type d -name '*.app' | head -1)
+          echo "APP_PATH=$APP_PATH"
+          # 自检：Release 主二进制应有实际体积
+          BIN="$APP_PATH/$(basename "$APP_PATH" .app)"
+          echo "main binary size: $(stat -f%z "$BIN") bytes"
+          SIZE=$(stat -f%z "$BIN")
+          if [ "$SIZE" -lt 1000000 ]; then echo "Main binary too small - probably a Debug stub"; exit 1; fi
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          VER=$(cat package.json | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")
+          IPA="hermes-mobile-${VER}-unsigned.ipa"
+          zip -r "$IPA" Payload
+          echo "IPA=$IPA" >> $GITHUB_ENV
+          # 回读校验 Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Payload/*.app/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/*.app/Info.plist || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: ${{ env.IPA }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          files: ${{ env.IPA }}
+          fail_on_unmatched_files: true
