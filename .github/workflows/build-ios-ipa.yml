@@ -25,11 +25,14 @@ jobs:
       - name: Show generated project
         run: ls ios
 
+      - name: Pod install
+        run: cd ios && pod install
+
       - name: Build (unsigned, Release, device)
         run: |
           xcodebuild \
-            -project ios/HermesMobileApp.xcodeproj \
-            -scheme HermesMobileApp \
+            -workspace ios/HermesAgentMobile.xcworkspace \
+            -scheme HermesAgentMobile \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
